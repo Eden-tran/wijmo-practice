@@ -85,7 +85,7 @@
     </p>
     
     <div class="info-text">
-      <strong>Try this:</strong> Change the continent and then double-click on the country cell to see the filtered ComboBox options!
+      <strong>Try this:</strong> Change the continent and watch the country ComboBox update automatically! Country cells are always ComboBoxes.
     </div>
 
     <div class="control-panel">
@@ -197,94 +197,118 @@
           });
         });
 
-        // Format country cells to show names
+        // Store ComboBox instances for each country cell
+        const countryComboBoxes = {};
+        let comboBoxesInitialized = false;
+
+        // Initialize ComboBoxes after grid is loaded
+        trnGrid.loadedRows.addHandler(() => {
+          if (!comboBoxesInitialized) {
+            setTimeout(() => {
+              initializeCountryComboBoxes();
+              comboBoxesInitialized = true;
+            }, 200);
+          }
+        });
+
+        function initializeCountryComboBoxes() {
+          let countryRowIndex = trnGrid.rows.findIndex(r => r.binding === 'country');
+          if (countryRowIndex === -1) return;
+          
+          for (let col = 0; col < trnGrid.columns.length; col++) {
+            createCountryComboBox(countryRowIndex, col);
+          }
+        }
+
+        function createCountryComboBox(row, col) {
+          let continentId = trnGrid.getCellData(row - 1, col);
+          let countryValue = trnGrid.getCellData(row, col);
+          let cellKey = `${row}_${col}`;
+          
+          // Get cell element
+          let cell = trnGrid.cells.getCellElement(row, col);
+          if (!cell) return;
+          
+          // Check if control already exists
+          if (wijmo.Control.getControl(cell)) {
+            console.log('Control already exists for cell', row, col);
+            return;
+          }
+          
+          // Clear cell and remove padding
+          cell.innerHTML = '';
+          cell.style.padding = '0';
+          cell.style.margin = '0';
+          
+          // Create a host div for the ComboBox
+          let hostDiv = document.createElement('div');
+          hostDiv.style.width = '100%';
+          hostDiv.style.height = '100%';
+          hostDiv.style.margin = '0';
+          hostDiv.style.padding = '0';
+          cell.appendChild(hostDiv);
+          
+          // Create ComboBox in the host div
+          try {
+            let combo = new input.ComboBox(hostDiv, {
+              itemsSource: getCountriesByContinent(continentId),
+              displayMemberPath: 'title',
+              selectedValuePath: 'value',
+              selectedValue: countryValue,
+              isEditable: false,
+              isRequired: false
+            });
+            
+            // Store reference
+            countryComboBoxes[cellKey] = combo;
+            
+            // Handle selection changes
+            combo.selectedIndexChanged.addHandler(() => {
+              // Update data without triggering full refresh
+              let data = trnGrid.collectionView.sourceCollection[col];
+              if (data) {
+                data.country = combo.selectedValue || '';
+                // Notify grid of change without full refresh
+                trnGrid.collectionView.refresh();
+              }
+            });
+            
+          } catch (error) {
+            console.error('Error creating ComboBox for cell', row, col, ':', error);
+            // Fallback to text
+            cell.textContent = getCountryName(countryValue);
+          }
+        }
+
+        // Prevent default editing for country cells since they're always ComboBoxes
+        trnGrid.beginningEdit.addHandler((s, e) => {
+          let row = s.rows[e.row];
+          if (row.binding === 'country') {
+            e.cancel = true; // Cancel editing since ComboBox handles it
+          }
+        });
+
+        // Use formatItem to ensure ComboBoxes stay visible
         trnGrid.formatItem.addHandler((s, e) => {
           if (e.panel.cellType === wijmo.grid.CellType.Cell) {
             let row = e.panel.rows[e.row];
             
-            // For country cells, show the country name
-            if (row.binding === 'country' && !s.editRange) {
-              let countryValue = e.panel.getCellData(e.row, e.col);
-              e.cell.textContent = getCountryName(countryValue);
+            // For country cells, ensure ComboBox is visible
+            if (row.binding === 'country') {
+              let cellKey = `${e.row}_${e.col}`;
+              let combo = countryComboBoxes[cellKey];
+              
+              // If ComboBox exists but not in DOM, re-add it
+              if (combo && !e.cell.contains(combo.hostElement)) {
+                e.cell.innerHTML = '';
+                e.cell.style.padding = '0';
+                e.cell.appendChild(combo.hostElement);
+              }
+              // If no ComboBox exists, create one
+              else if (!combo) {
+                createCountryComboBox(e.row, e.col);
+              }
             }
-          }
-        });
-
-        // Handle editing with Wijmo ComboBox
-        trnGrid.beginningEdit.addHandler((s, e) => {
-          let row = s.rows[e.row];
-          
-          if (row.binding === 'country') {
-            // Cancel default editing
-            e.cancel = true;
-            
-            // Get continent from row above
-            let continentId = s.getCellData(e.row - 1, e.col);
-            let filteredCountries = getCountriesByContinent(continentId);
-            let currentValue = s.getCellData(e.row, e.col);
-            
-            // Create editor host
-            let cell = s.cells.getCellElement(e.row, e.col);
-            let hostDiv = document.createElement('div');
-            hostDiv.style.width = '100%';
-            hostDiv.style.height = '100%';
-            hostDiv.style.margin = '0';
-            hostDiv.style.padding = '0';
-            hostDiv.style.border = 'none';
-            hostDiv.style.display = 'block';
-            
-            // Clear cell and add host
-            cell.innerHTML = '';
-            cell.style.padding = '0';
-            cell.appendChild(hostDiv);
-            
-            // Create ComboBox using your preferred syntax
-            let editor = new input.ComboBox(hostDiv, {
-              itemsSource: filteredCountries,
-              displayMemberPath: 'title',
-              selectedValuePath: 'value',
-              selectedValue: currentValue,
-              isEditable: true,
-              isRequired: false,
-              isDroppedDown: true
-            });
-            
-            // Handle selection
-            let commitEdit = () => {
-              let newValue = editor.selectedValue;
-              if (newValue !== undefined) {
-                s.setCellData(e.row, e.col, newValue);
-              }
-              s.focus();
-            };
-            
-            // Commit on selection change
-            editor.selectedIndexChanged.addHandler(commitEdit);
-            
-            // Handle keyboard
-            editor.hostElement.addEventListener('keydown', (evt) => {
-              if (evt.key === 'Enter') {
-                commitEdit();
-                evt.preventDefault();
-              } else if (evt.key === 'Escape') {
-                s.focus();
-                evt.preventDefault();
-              }
-            });
-            
-            // Handle lost focus
-            editor.lostFocus.addHandler(() => {
-              setTimeout(() => {
-                if (!editor.containsFocus) {
-                  commitEdit();
-                }
-              }, 100);
-            });
-            
-            // Focus the editor
-            setTimeout(() => {
-              editor.focus();
-            }, 50);
           }
         });
 
@@ -293,19 +317,33 @@
           let row = s.rows[e.row];
           
           if (row.binding === 'continent') {
-            // Clear country selection in the same column if invalid
+            // Update country ComboBox in the same column
             let countryRowIndex = e.row + 1;
             if (countryRowIndex < s.rows.length) {
               let continentId = s.getCellData(e.row, e.col);
               let currentCountry = s.getCellData(countryRowIndex, e.col);
+              let cellKey = `${countryRowIndex}_${e.col}`;
               
-              // Check if current country is still valid for new continent
-              let countries = getCountriesByContinent(continentId);
-              let validCountry = countries.find(c => c.value === currentCountry);
-              if (!validCountry) {
-                // Clear if country is not valid for new continent
-                s.setCellData(countryRowIndex, e.col, '');
+              // Get the ComboBox for this cell
+              let combo = countryComboBoxes[cellKey];
+              if (combo) {
+                // Update ComboBox with new country list
+                let countries = getCountriesByContinent(continentId);
+                combo.itemsSource = countries;
+                
+                // Check if current selection is still valid
+                let validCountry = countries.find(c => c.value === currentCountry);
+                if (!validCountry) {
+                  // Clear selection if not valid
+                  combo.selectedValue = null;
+                  s.setCellData(countryRowIndex, e.col, '');
+                } else {
+                  combo.selectedValue = currentCountry;
+                }
               }
+              
+              // Refresh the grid to update display
+              s.invalidate();
             }
           }
         });
